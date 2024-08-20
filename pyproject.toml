@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "simpleDicomViewer"
+version = "0.0.1"
+authors = [
+  { name="Justin Kirby", email="justin.kirby@nih.gov" },
+]
+description = "A package to simplify visualizing DICOM data via Jupyter/Python."
+readme = "README.md"
+requires-python = ">=3.7"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+]
+
+dependencies = [
+  "pydicom",
+  "matplotlib",
+  "numpy",
+  "ipywidgets", 
+  "pydicom-seg", 
+  "rt-utils"
+]
+
+[project.urls]
+"Homepage" = "https://github.com/kirbyju/simpleDicomViewer"
+"Bug Tracker" = "https://github.com/kirbyju/simpleDicomViewer/issues"
