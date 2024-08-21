@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "simpleDicomViewer"
-version = "0.0.1"
+version = "0.0.3"
 authors = [
   { name="Justin Kirby", email="justin.kirby@nih.gov" },
 ]
@@ -21,8 +21,7 @@ dependencies = [
   "pydicom",
   "matplotlib",
   "numpy",
-  "ipywidgets", 
-  "pydicom-seg", 
+  "ipywidgets",  
   "rt-utils"
 ]
 
