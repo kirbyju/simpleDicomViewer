@@ -9,7 +9,7 @@ We're installing a forked version of pydicom-seg because the PYPI package is usi
 ```import sys
 
 # install forked pydicom-seg with updated jsonschema version
-!pip install --upgrade -q git+https://github.com/kirbyju/pydicom-seg.git@master
+!{sys.executable} -m pip install --upgrade -q git+https://github.com/kirbyju/pydicom-seg.git@master
 
 # install simpleDicomViewer
 !{sys.executable} -m pip install --upgrade -q simpleDicomViewer```
@@ -18,7 +18,7 @@ We're installing a forked version of pydicom-seg because the PYPI package is usi
 
 Import using:
 
-`from simpleDicomViewer import dicomViewer`
+```from simpleDicomViewer import dicomViewer```
 
 Examples for using it can be found in [demo.ipynb](https://github.com/kirbyju/simpleDicomViewer/blob/main/demo.ipynb).
 

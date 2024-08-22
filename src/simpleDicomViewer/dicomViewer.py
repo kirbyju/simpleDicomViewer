@@ -3,18 +3,29 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import pydicom
-import pydicom_seg
 import rt_utils
 import os
+import subprocess
+import sys
+
 try:
     import tkinter
     from tkinter import filedialog
 except ModuleNotFoundError:
     tkinter = None
 
+try:
+    # Try to import pydicom_seg
+    import pydicom_seg
+except ImportError:
+    # If the import fails, install the forked package from GitHub with updated jsonschema version
+    _log.info(f"Installing pydicom-seg dependency. This may take a minute...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "git+https://github.com/kirbyju/pydicom-seg.git@master"])
+
 class StopExecution(Exception):
     def _render_traceback_(self):
         pass
+
     
 def viewSeries(path = ""):
     """
