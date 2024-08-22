@@ -6,19 +6,21 @@ This is a **very** simplistic DICOM viewer for images and related segmentations 
 
 We're installing a forked version of pydicom-seg because the PYPI package is using a very outdated version of jsonschema, which creates a lot of dependency conflicts even though the newer version appears to work without any issues.
 
-```import sys
+```
+import sys
 
 # install forked pydicom-seg with updated jsonschema version
 !{sys.executable} -m pip install --upgrade -q git+https://github.com/kirbyju/pydicom-seg.git@master
 
 # install simpleDicomViewer
-!{sys.executable} -m pip install --upgrade -q simpleDicomViewer```
+!{sys.executable} -m pip install --upgrade -q simpleDicomViewer
+```
 
 # Usage
 
 Import using:
 
-```from simpleDicomViewer import dicomViewer```
+`from simpleDicomViewer import dicomViewer`
 
 Examples for using it can be found in [demo.ipynb](https://github.com/kirbyju/simpleDicomViewer/blob/main/demo.ipynb).
 
