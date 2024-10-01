@@ -26,11 +26,11 @@ class StopExecution(Exception):
     def _render_traceback_(self):
         pass
 
-    
+
 def viewSeries(path = ""):
     """
     Visualizes a DICOM series (scan).
-    If neither no path is specified, the user will be 
+    If neither no path is specified, the user will be
     prompted to select a directory using a GUI.
     """
     # set path where downloadSeries() saves the data if seriesUid is provided
@@ -124,7 +124,7 @@ def viewSeriesSEG(seriesPath = "", SEGPath = ""):
 
         image += np.int16(intercept)
 
-    pixel_data = np.array(image, dtype=np.int16)     
+    pixel_data = np.array(image, dtype=np.int16)
     SEG_data = pydicom.dcmread(SEGPath)
     try:
         reader = pydicom_seg.MultiClassReader()
@@ -136,7 +136,7 @@ def viewSeriesSEG(seriesPath = "", SEGPath = ""):
     if slices[0].SeriesInstanceUID != result.referenced_series_uid:
         raise Exception("The selected reference series and the annotation series don't match!")
 
-    colorPaleatte = ["blue", "orange", "green", "red", "cyan", "brown", "lime", "purple", "yellow", "pink", "olive"] 
+    colorPaleatte = ["blue", "orange", "green", "red", "cyan", "brown", "lime", "purple", "yellow", "pink", "olive"]
     def seg_animation(suppress_warnings, x, **kwargs):
         plt.imshow(pixel_data[x], cmap = plt.cm.gray)
         if isinstance(reader, pydicom_seg.reader.MultiClassReader):
@@ -208,7 +208,7 @@ def viewSeriesRT(seriesPath = "", RTPath = ""):
         image += np.int16(intercept)
 
     pixel_data = np.array(image, dtype=np.int16)
-    colorPaleatte = ["blue", "orange", "green", "red", "cyan", "brown", "lime", "purple", "yellow", "pink", "olive"] 
+    colorPaleatte = ["blue", "orange", "green", "red", "cyan", "brown", "lime", "purple", "yellow", "pink", "olive"]
     def rt_animation(suppress_warnings, x, **kwargs):
         plt.imshow(pixel_data[x], cmap = plt.cm.gray, interpolation = None)
         for i in range(len(kwargs)):
@@ -241,7 +241,7 @@ def viewSeriesRT(seriesPath = "", RTPath = ""):
     interact(rt_animation, suppress_warnings = False, x = (0, len(pixel_data)-1), **kwargs)
 
 
-def viewSeriesAnnotation(seriesPath = "", annotationPath = ""):
+def viewSeriesAnnotation(seriesPath="", annotationPath=""):
     """
     Visualizes a Series (scan) and a related segmentation overlay (SEG or RTSTRUCT).
     Opens a Tkinter file browser to choose a folder/file if
@@ -249,44 +249,55 @@ def viewSeriesAnnotation(seriesPath = "", annotationPath = ""):
     Note that non-axial images might not be correctly displayed.
     """
 
+    # Handle seriesPath selection via Tkinter if not provided
     if seriesPath == "":
         try:
             print(f"Select your image series.")
             tkinter.Tk().withdraw()
-            folder_path = filedialog.askdirectory()
-            seriesPath = folder_path
+            seriesPath = filedialog.askdirectory()
         except Exception as e:
             print(
                 f"An error occurred: {e}"
-                f"{seriesPath} is your path."
-                f"Either Tkinter cannot be launched for series selection, or you're trying to load an unsupported modality."
-                "\nYou can try specifying the folder path to avoid TKinter errors."
-            )
-            return
-  
-    if annotationPath == "":
-        try:
-            print(f"Select your annotation file.")
-            tkinter.Tk().withdraw()
-            file_path = filedialog.askopenfilename()
-            annotationPath = file_path
-        except Exception as e:
-            print(
-                f"An error occurred: {e}"
-                f"Either Tkinter cannot be launched for series selection, or you're trying to load an unsupported modality."
+                "\nEither Tkinter cannot be launched for series selection, or you're trying to load an unsupported modality."
                 "\nYou can try specifying the folder path to avoid TKinter errors."
             )
             return
 
-    if os.path.isdir(seriesPath) and os.path.isfile(annotationPath):
+    # Handle annotationPath selection via Tkinter if not provided
+    if annotationPath == "":
+        try:
+            print(f"Select your annotation file.")
+            tkinter.Tk().withdraw()
+            annotationPath = filedialog.askopenfilename()
+        except Exception as e:
+            print(
+                f"An error occurred: {e}"
+                "\nEither Tkinter cannot be launched for annotation selection, or you're trying to load an unsupported modality."
+                "\nYou can try specifying the annotation file path to avoid TKinter errors."
+            )
+            return
+
+    # Check if the seriesPath is valid
+    if not os.path.isdir(seriesPath):
+        print(f"{seriesPath} is not a directory.")
+        return
+
+    # Check if the annotationPath is valid
+    if not os.path.isfile(annotationPath):
+        print(f"{annotationPath} is not a valid file path.")
+        return
+
+    # Try to read the annotation file and check the modality
+    try:
+        # Safely read the annotation file
         annotationModality = pydicom.dcmread(annotationPath).Modality
+
+        # Check the modality and proceed accordingly
         if annotationModality == "SEG":
             viewSeriesSEG(seriesPath, annotationPath)
         elif annotationModality == "RTSTRUCT":
             viewSeriesRT(seriesPath, annotationPath)
         else:
             print(f"Wrong modality for the segmentation series, please check your selection.")
-    elif not os.path.isdir(seriesPath):
-        print(f"{seriesPath} is not a directory.")
-    else:
-        print(f"{annotationPath} is not a file with the correct modality: {annotationModality}.")
+    except Exception as e:
+        print(f"Error reading DICOM file {annotationPath}: {e}")
