@@ -153,7 +153,8 @@ def viewSeriesSEG(seriesPath = "", SEGPath = ""):
                     # Get mask for the current slice and segment
                     mask_data = seg.get_pixels_by_source_instance(
                         source_sop_instance_uids=[current_slice_uid],
-                        segment_numbers=[desc.segment_number]
+                        segment_numbers=[desc.segment_number],
+                        ignore_spatial_locations=True
                     )
                     # The output is (instances, rows, cols, segments), so we squeeze it
                     mask_data = np.squeeze(mask_data)
