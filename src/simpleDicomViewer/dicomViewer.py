@@ -14,14 +14,7 @@ try:
 except ModuleNotFoundError:
     tkinter = None
 
-try:
-    # Try to import pydicom_seg
-    import pydicom_seg
-except ImportError:
-    # If the import fails, install the forked package from GitHub with updated jsonschema version
-    print(f"Installing pydicom-seg dependency. This may take a minute...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "git+https://github.com/kirbyju/pydicom-seg.git@master"])
-    import pydicom_seg
+import highdicom as hd
 
 class StopExecution(Exception):
     def _render_traceback_(self):
@@ -126,49 +119,60 @@ def viewSeriesSEG(seriesPath = "", SEGPath = ""):
         image += np.int16(intercept)
 
     pixel_data = np.array(image, dtype=np.int16)
-    SEG_data = pydicom.dcmread(SEGPath)
-    try:
-        reader = pydicom_seg.MultiClassReader()
-        result = reader.read(SEG_data)
-    except ValueError:
-        reader = pydicom_seg.SegmentReader()
-        result = reader.read(SEG_data)
 
-    if slices[0].SeriesInstanceUID != result.referenced_series_uid:
-        raise Exception("The selected reference series and the annotation series don't match!")
+    # Use highdicom to read the SEG file
+    seg = hd.seg.segread(SEGPath)
+
+    # Verify that the segmentation references the correct series
+    source_image_uids = {sop for _, _, sop in seg.get_source_image_uids()}
+    slice_uids = {s.SOPInstanceUID for s in slices}
+    if not source_image_uids.issubset(slice_uids):
+        # This is not a perfect check, but it's a good heuristic.
+        # A more robust check would involve matching frame of reference UIDs.
+        print("Warning: The segmentation may not reference the correct image series.")
 
     colorPaleatte = ["blue", "orange", "green", "red", "cyan", "brown", "lime", "purple", "yellow", "pink", "olive"]
+
+    # Get descriptions for all segments
+    segment_descriptions = [seg.get_segment_description(i) for i in seg.get_segment_numbers()]
+
     def seg_animation(suppress_warnings, x, **kwargs):
         plt.imshow(pixel_data[x], cmap = plt.cm.gray)
-        if isinstance(reader, pydicom_seg.reader.MultiClassReader):
-            if kwargs[list(kwargs)[0]] == True:
-                mask_data = result.data
+
+        current_slice_uid = slices[x].SOPInstanceUID
+
+        for i, desc in enumerate(segment_descriptions):
+            if i >= 10:
+                if not suppress_warnings:
+                    print(f"Previewing first 10 of {len(segment_descriptions)} labels. Please use a DICOM workstation such as 3D Slicer to view the full dataset.")
+                break
+
+            kwarg_key = f"{desc.segment_number} - {desc.SegmentDescription}"
+            if kwargs.get(kwarg_key, False):
                 try:
-                    plt.imshow(mask_data[x], cmap = plt.cm.rainbow, alpha = 0.5*(mask_data[x] > 0), interpolation = None)
-                except IndexError:
-                    if suppress_warnings == False:
-                        print(f"Visualization for the segment failed. It does not have the same slice count as the reference series.")
-        else:
-            for i in result.available_segments:
-                if i == 10 and len(result.available_segments) > 10:
-                    print(f"Previewing first 10 of {len(result.available_segments)} labels. Please use a DICOM workstation such as 3D Slicer to view the full dataset.")
-                if kwargs[list(kwargs)[i-1]] == True:
-                    mask_data = result.segment_data(i)
-                    cmap = matplotlib.colors.ListedColormap(colorPaleatte[i])
-                    try:
-                        plt.imshow(mask_data[x], cmap = cmap, alpha = 0.5*(mask_data[x] > 0), interpolation = None)
-                    except IndexError:
-                        if suppress_warnings == False:
-                            print(f"Visualization for segment {list(kwargs.keys())[i-1]} failed. It does not have the same slice count as the reference series.")
+                    # Get mask for the current slice and segment
+                    mask_data = seg.get_pixels_by_source_instance(
+                        source_sop_instance_uids=[current_slice_uid],
+                        segment_numbers=[desc.segment_number]
+                    )
+                    # The output is (instances, rows, cols, segments), so we squeeze it
+                    mask_data = np.squeeze(mask_data)
+
+                    if mask_data.ndim == 2 and mask_data.shape == pixel_data[x].shape:
+                        cmap = matplotlib.colors.ListedColormap(colorPaleatte[i % len(colorPaleatte)])
+                        plt.imshow(mask_data, cmap=cmap, alpha=0.5 * (mask_data > 0), interpolation=None)
+                    elif not suppress_warnings:
+                        print(f"No segmentation found for segment '{desc.SegmentDescription}' on this slice.")
+
+                except Exception as e:
+                    if not suppress_warnings:
+                        print(f"Could not display segment '{desc.SegmentDescription}': {e}")
+
         plt.axis('scaled')
         plt.show()
 
-    if isinstance(reader, pydicom_seg.reader.MultiClassReader):
-        kwargs = {"Show Segments": True}
-        interact(seg_animation, suppress_warnings = False, x=(0, len(pixel_data)-1), **kwargs)
-    else:
-        kwargs = {f"{i+1} - {v.SegmentDescription}":True for i, v in enumerate(SEG_data.SegmentSequence[:10])}
-        interact(seg_animation, suppress_warnings = False, x=(0, len(pixel_data)-1), **kwargs)
+    kwargs = {f"{desc.segment_number} - {desc.SegmentDescription}": True for desc in segment_descriptions[:10]}
+    interact(seg_animation, suppress_warnings=False, x=(0, len(pixel_data)-1), **kwargs)
 
 
 def viewSeriesRT(seriesPath = "", RTPath = ""):

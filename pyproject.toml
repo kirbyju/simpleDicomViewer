@@ -22,7 +22,9 @@ dependencies = [
   "matplotlib",
   "numpy",
   "ipywidgets",
-  "rt-utils"
+  "rt-utils",
+  "highdicom",
+  "jupyter"
 ]
 
 [project.urls]
