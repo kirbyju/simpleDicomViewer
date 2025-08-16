@@ -91,45 +91,35 @@ def viewSeriesSEG(seriesPath = "", SEGPath = ""):
     Used by the viewSeriesAnnotation() function.
     Not recommended to be used as a standalone function.
     """
-    slices = [pydicom.dcmread(seriesPath + '/' + s) for s in os.listdir(seriesPath) if s.endswith(".dcm")]
-    slices.sort(key = lambda x: int(x.InstanceNumber), reverse = True)
+    # Use highdicom to read the series and segmentation
+    try:
+        image_datasets = hd.io.read_dicom_series(seriesPath)
+        image = hd.Image(image_datasets)
+        image_volume = hd.Volume(image)
+        pixel_data = image_volume.array
+    except Exception as e:
+        print(f"Could not load image series from {seriesPath}: {e}")
+        return
 
     try:
-        modality = slices[0].Modality
-    except IndexError:
-        print(f"Your path does not contain a single DICOM series.")
-        raise StopExecution
+        seg = hd.seg.segread(SEGPath)
+        # The ignore_spatial_locations=True flag is important here.
+        seg_volume = seg.get_volume(ignore_spatial_locations=True)
+    except Exception as e:
+        print(f"Could not load SEG file from {SEGPath}: {e}")
+        return
 
-    image = np.stack([s.pixel_array for s in slices])
-    image = image.astype(np.int16)
+    # Resample the segmentation to match the image volume
+    # This ensures that the mask is aligned with the image
+    if image_volume.geometry != seg_volume.geometry:
+        print("Image and segmentation have different geometries. Resampling segmentation...")
+        transformer = hd.VolumeToVolumeTransformer(
+            volume=seg_volume,
+            reference_volume=image_volume
+        )
+        seg_volume = transformer.transform()
 
-    if modality == "CT":
-        # Set outside-of-scan pixels to 0
-        # The intercept is usually -1024, so air is approximately 0
-        image[image == -2000] = 0
-
-        # Convert to Hounsfield units (HU)
-        intercept = slices[0].RescaleIntercept
-        slope = slices[0].RescaleSlope
-
-        if slope != 1:
-            image = slope * image.astype(np.float64)
-            image = image.astype(np.int16)
-
-        image += np.int16(intercept)
-
-    pixel_data = np.array(image, dtype=np.int16)
-
-    # Use highdicom to read the SEG file
-    seg = hd.seg.segread(SEGPath)
-
-    # Verify that the segmentation references the correct series
-    source_image_uids = {sop for _, _, sop in seg.get_source_image_uids()}
-    slice_uids = {s.SOPInstanceUID for s in slices}
-    if not source_image_uids.issubset(slice_uids):
-        # This is not a perfect check, but it's a good heuristic.
-        # A more robust check would involve matching frame of reference UIDs.
-        print("Warning: The segmentation may not reference the correct image series.")
+    mask_array = seg_volume.array
 
     colorPaleatte = ["blue", "orange", "green", "red", "cyan", "brown", "lime", "purple", "yellow", "pink", "olive"]
 
@@ -138,8 +128,6 @@ def viewSeriesSEG(seriesPath = "", SEGPath = ""):
 
     def seg_animation(suppress_warnings, x, **kwargs):
         plt.imshow(pixel_data[x], cmap = plt.cm.gray)
-
-        current_slice_uid = slices[x].SOPInstanceUID
 
         for i, desc in enumerate(segment_descriptions):
             if i >= 10:
@@ -150,14 +138,9 @@ def viewSeriesSEG(seriesPath = "", SEGPath = ""):
             kwarg_key = f"{desc.segment_number} - {desc.SegmentDescription}"
             if kwargs.get(kwarg_key, False):
                 try:
-                    # Get mask for the current slice and segment
-                    mask_data = seg.get_pixels_by_source_instance(
-                        source_sop_instance_uids=[current_slice_uid],
-                        segment_numbers=[desc.segment_number],
-                        ignore_spatial_locations=True
-                    )
-                    # The output is (instances, rows, cols, segments), so we squeeze it
-                    mask_data = np.squeeze(mask_data)
+                    # The mask is now a 4D array (slice, row, col, segment)
+                    # We get the mask for the current slice and segment
+                    mask_data = mask_array[x, :, :, i]
 
                     if mask_data.ndim == 2 and mask_data.shape == pixel_data[x].shape:
                         cmap = matplotlib.colors.ListedColormap(colorPaleatte[i % len(colorPaleatte)])
