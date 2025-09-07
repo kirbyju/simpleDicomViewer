@@ -1,6 +1,6 @@
 # --- Imports ---
 import matplotlib.pyplot as plt
-from ipywidgets import interactive_output, IntSlider, Checkbox, VBox, HBox
+from ipywidgets import interactive_output, IntSlider, Checkbox, VBox, HBox, Dropdown
 import numpy as np
 import os
 import pydicom
@@ -13,7 +13,6 @@ import warnings
 # --- DICOM UID Constants for Modality Check ---
 RTSTRUCT_UID = '1.2.840.10008.5.1.4.1.1.481.3'
 SEG_UID = '1.2.840.10008.5.1.4.1.1.66.4'
-
 
 def viewDicom(imgPath: str, segPath: str = None):
     """
@@ -30,27 +29,21 @@ def viewDicom(imgPath: str, segPath: str = None):
             Path to the DICOM segmentation file (SEG or RTSTRUCT).
             The function will auto-detect the modality. Defaults to None.
     """
-
-    # --- 1. Load Image Series using MONAI ---
     pixel_loader = Compose([LoadImage(reader=ITKReader(reverse_indexing=True)), EnsureChannelFirst()])
     print(f"Loading image series from '{imgPath}'...")
     try:
         image_metatensor = pixel_loader(imgPath)
         image_np = image_metatensor.numpy()[0]
-        print(f"Successfully loaded image pixel data. Shape: {image_np.shape}")
     except Exception as e:
         print(f"ERROR: Could not load image series from '{imgPath}'. Exception: {e}")
         return
 
-    # --- 2. Load and Process Segmentation (with Auto-Detection) ---
     label_map_np = np.zeros_like(image_np, dtype=np.uint8)
     segment_metadata = {}
-
     if segPath and os.path.exists(segPath):
         try:
             dcm_header = pydicom.dcmread(segPath, force=True, stop_before_pixels=True)
             modality = dcm_header.SOPClassUID
-
             if modality == SEG_UID:
                 print(f"Detected DICOM SEG file. Loading...")
                 seg_metatensor = pixel_loader(segPath)
@@ -69,7 +62,6 @@ def viewDicom(imgPath: str, segPath: str = None):
                     segment_mask = stacked_mask_np[frame_indices] > 0
                     label_map_np[segment_mask] = segment_number
                 print("Successfully created label map from DICOM SEG.")
-
             elif modality == RTSTRUCT_UID:
                 print(f"Detected DICOM RTSTRUCT file. Loading...")
                 print("Loading and sorting source DICOM series for RTSTRUCT alignment...")
@@ -88,17 +80,14 @@ def viewDicom(imgPath: str, segPath: str = None):
                         mask_3d = mask_3d.transpose(2, 0, 1)
                     label_map_np[mask_3d] = segment_number
                 print("Successfully created label map from RTSTRUCT.")
-
             else:
                 print(f"Warning: Unsupported segmentation modality UID: {modality}")
-
         except Exception as e:
             print(f"ERROR: Could not process segmentation file '{segPath}'. Exception: {e}")
             pass
     else:
         print("No segmentation file found. Viewer will show image only.")
 
-    # --- 3. Create Stable Color Map and Widgets ---
     color_map = {}
     if segment_metadata:
         max_seg_num = max(segment_metadata.keys())
@@ -107,20 +96,30 @@ def viewDicom(imgPath: str, segPath: str = None):
             color_map[seg_num] = cmap(seg_num / max_seg_num)
 
     data_min, data_max = image_np.min(), image_np.max()
-    default_width = int(data_max - data_min)
-    default_level = int(data_min + default_width / 2)
-
+    presets = {
+        'Default': (int(data_max - data_min), int(data_min + (data_max - data_min) / 2)),
+        'Abdomen/Soft Tissue': (400, 50), 'Brain': (80, 40), 'Bone': (2000, 600),
+        'Lung': (1500, -600), 'Mediastinum': (350, 50), 'Stroke': (40, 40),
+        'Subdural': (150, 70),
+    }
     controls = {
-        'slice_index': IntSlider(min=0, max=image_np.shape[0] - 1, step=1, value=image_np.shape[0] // 2, description="Slice", continuous_update=False, layout={'width': '400px'}),
-        'window_level': IntSlider(min=data_min, max=data_max, step=1, value=default_level, description="Level", continuous_update=False, layout={'width': '400px'}),
-        'window_width': IntSlider(min=1, max=default_width, step=1, value=default_width, description="Width", continuous_update=False, layout={'width': '400px'}),
+        'slice_index': IntSlider(min=0, max=image_np.shape[0] - 1, value=image_np.shape[0] // 2, description="Slice", continuous_update=False, layout={'width': '400px'}),
+        'window_level': IntSlider(min=data_min, max=data_max, value=presets['Default'][1], description="Level", continuous_update=False, layout={'width': '400px'}),
+        'window_width': IntSlider(min=1, max=int(data_max - data_min), value=presets['Default'][0], description="Width", continuous_update=False, layout={'width': '400px'}),
+        'preset_selector': Dropdown(options=list(presets.keys()), value='Default', description='Preset:', layout={'width': '400px'}),
     }
     roi_checkboxes = []
     for seg_num, seg_label in segment_metadata.items():
         controls[f'show_{seg_label}'] = Checkbox(value=True, description=seg_label)
         roi_checkboxes.append(controls[f'show_{seg_label}'])
 
-    # --- 4. Define the Plotting Function ---
+    def update_sliders_from_preset(change):
+        if change.new in presets:
+            width, level = presets[change.new]
+            controls['window_width'].value = width
+            controls['window_level'].value = level
+    controls['preset_selector'].observe(update_sliders_from_preset, names='value')
+
     def plot_slice_with_overlays(slice_index, window_level, window_width, **kwargs):
         image_slice = image_np[slice_index, :, :]
         lower_bound = window_level - (window_width / 2)
@@ -136,17 +135,16 @@ def viewDicom(imgPath: str, segPath: str = None):
         active_pixels = overlay_slice.sum(axis=2) > 0
         alpha = 0.6
         rgb_image_slice[active_pixels] = (rgb_image_slice[active_pixels] * (1 - alpha) + overlay_slice[active_pixels] * alpha)
-
         fig, ax = plt.subplots(figsize=(10, 10))
         ax.imshow(rgb_image_slice)
         ax.set_title(f"Slice {slice_index + 1} / {image_np.shape[0]}")
         ax.axis('off')
         plt.show()
 
-    # --- 5. Set Up the Interactive Viewer Layout ---
     print("\nInitializing interactive viewer...")
-    ui_panel = VBox([controls['slice_index'], controls['window_level'], controls['window_width'], VBox(roi_checkboxes)])
-    output_panel = interactive_output(plot_slice_with_overlays, controls)
+    ui_panel = VBox([controls['preset_selector'], controls['slice_index'], controls['window_level'], controls['window_width'], VBox(roi_checkboxes)])
+    plot_controls = {k: v for k, v in controls.items() if k != 'preset_selector'}
+    output_panel = interactive_output(plot_slice_with_overlays, plot_controls)
     display(HBox([ui_panel, output_panel]))
 
 

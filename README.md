@@ -1,16 +1,15 @@
 # Summary
 
-This is a **very** simplistic DICOM viewer for images and related segmentations (RTSTRUCT and SEG).  It was developed as a quick and dirty solution for performing spot checks on data downloaded from [The Cancer Imaging Archive](https://www.cancerimagingarchive.net/) using [tcia_utils](https://pypi.org/project/tcia-utils/).  It was later separated into a stand-alone PyPI package as many users of tcia_utils are not concerned with interactively viewing images and this capability introduced a lot of additional dependencies.  There are many other more advanced viewers out there (e.g. 3D Slicer or itkWidgets) that you should try if your data fails with this tool.
+This is a simplistic DICOM viewer for images and related segmentations (RTSTRUCT and SEG).  It was developed as a quick and dirty solution for performing spot checks on data downloaded from [The Cancer Imaging Archive (TCIA)](https://www.cancerimagingarchive.net/) using [tcia_utils](https://pypi.org/project/tcia-utils/).  It was later separated into a stand-alone PyPI package as many users of tcia_utils are not concerned with interactively viewing images and this capability introduced a lot of additional dependencies.  There are many other more advanced viewers out there (e.g. 3D Slicer or itkWidgets) that you should try if your data fails with this tool.
+
+[![PyPI Downloads](https://static.pepy.tech/personalized-badge/simpledicomviewer?period=monthly&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/simpledicomviewer)
 
 # Installation
 
-We're installing a forked version of pydicom-seg because the PYPI package is using a very outdated version of jsonschema, which creates a lot of dependency conflicts even though the newer version appears to work without any issues.
+Installation is performed using `pip install simpleDicomViewer` or:
 
 ```
 import sys
-
-# install forked pydicom-seg with updated jsonschema version
-!{sys.executable} -m pip install --upgrade -q git+https://github.com/kirbyju/pydicom-seg.git@master
 
 # install simpleDicomViewer
 !{sys.executable} -m pip install --upgrade -q simpleDicomViewer
@@ -18,15 +17,19 @@ import sys
 
 # Usage
 
-Import using:
+For viewing images, specify the path to a directory containing images from a single DICOM series.  For annotations/segmentations, the path should point to the specific SEG or RTSTRUCT DICOM file name (not directory) that you're trying to visualize.
 
-`from simpleDicomViewer import dicomViewer`
+```
+from simpleDicomViewer import dicomViewer
 
-Examples for using it can be found in [demo.ipynb](https://github.com/kirbyju/simpleDicomViewer/blob/main/demo.ipynb).
+viewDicom(imagePath, segmentationPath)
+```
+
+Functional examples using TCIA data can be found in [TCIA_Segmentations.ipynb](https://github.com/kirbyju/TCIA_Notebooks/blob/main/TCIA_Segmentations.ipynb).
 
 # Acknowledgements
 
-A big thanks to [Adam Li](https://github.com/adamli98) who introduced the functionality to display the segmentation overlays.
+Thanks to [Adam Li](https://github.com/adamli98) who introduced the original functionality in v1.x to display the segmentation overlays.
 
 ### Citations:
 This repository includes sample data from The Cancer Imaging Archive in the "data" folder which you can use for testing its features.  
