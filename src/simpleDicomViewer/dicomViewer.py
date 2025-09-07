@@ -1,304 +1,184 @@
-from ipywidgets import interact
-import matplotlib
+# --- Imports ---
 import matplotlib.pyplot as plt
+from ipywidgets import interactive_output, IntSlider, Checkbox, VBox, HBox
 import numpy as np
-import pydicom
-import rt_utils
 import os
-import subprocess
-import sys
+import pydicom
+from monai.transforms import Compose, LoadImage, EnsureChannelFirst
+from monai.data import ITKReader
+from rt_utils import RTStruct
+from IPython.display import display
+import warnings
 
-try:
-    import tkinter
-    from tkinter import filedialog
-except ModuleNotFoundError:
-    tkinter = None
-
-try:
-    # Try to import pydicom_seg
-    import pydicom_seg
-except ImportError:
-    # If the import fails, install the forked package from GitHub with updated jsonschema version
-    print(f"Installing pydicom-seg dependency. This may take a minute...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-q", "git+https://github.com/kirbyju/pydicom-seg.git@master"])
-    import pydicom_seg
-
-class StopExecution(Exception):
-    def _render_traceback_(self):
-        pass
+# --- DICOM UID Constants for Modality Check ---
+RTSTRUCT_UID = '1.2.840.10008.5.1.4.1.1.481.3'
+SEG_UID = '1.2.840.10008.5.1.4.1.1.66.4'
 
 
-def viewSeries(path = ""):
+def viewDicom(imgPath: str, segPath: str = None):
     """
-    Visualizes a DICOM series (scan).
-    If neither no path is specified, the user will be
-    prompted to select a directory using a GUI.
+    Creates and displays an interactive DICOM viewer in a Jupyter Notebook.
+
+    The viewer supports 3D image series, interactive slice navigation,
+    window/level adjustments, and overlays for DICOM SEG and RTSTRUCT
+    annotations with toggling capabilities.
+
+    Args:
+        imgPath (str):
+            Path to the directory containing the DICOM image series.
+        segPath (str, optional):
+            Path to the DICOM segmentation file (SEG or RTSTRUCT).
+            The function will auto-detect the modality. Defaults to None.
     """
-    # set path where downloadSeries() saves the data if seriesUid is provided
-    if path == "":
-        try:
-            tkinter.Tk().withdraw()
-            folder_path = filedialog.askdirectory()
-            path = folder_path
-        except Exception:
-            print(
-                f"Either Tkinter cannot be launched for series selection, or you're trying to load an unsupported modality."
-                "\nYou can try specifying the folder path to avoid TKinter errors."
-            )
-            return
 
-    # Verify series exists before visualizing
-    if os.path.isdir(path):
-        # load scan to pydicom
-        slices = [pydicom.dcmread(path + '/' + s) for s in
-                  os.listdir(path) if s.endswith(".dcm")]
-
-        slices.sort(key = lambda x: int(x.InstanceNumber), reverse = True)
-
-        try:
-            modality = slices[0].Modality
-        except IndexError:
-            print(f"Your path does not contain a single DICOM series.")
-            raise StopExecution
-
-        image = np.stack([s.pixel_array for s in slices])
-        image = image.astype(np.int16)
-
-        if modality == "CT":
-            # Set outside-of-scan pixels to 0
-            # The intercept is usually -1024, so air is approximately 0
-            image[image == -2000] = 0
-
-            # Convert to Hounsfield units (HU)
-            intercept = slices[0].RescaleIntercept
-            slope = slices[0].RescaleSlope
-
-            if slope != 1:
-                image = slope * image.astype(np.float64)
-                image = image.astype(np.int16)
-
-            image += np.int16(intercept)
-
-        pixel_data = np.array(image, dtype=np.int16)
-
-        # slide through dicom images using a slide bar
-        def dicom_animation(x):
-            plt.imshow(pixel_data[x], cmap = plt.cm.gray)
-            plt.show()
-        interact(dicom_animation, x=(0, len(pixel_data)-1))
-    else:
-        print(f"Your path does not contain a single DICOM series.")
-
-
-def viewSeriesSEG(seriesPath = "", SEGPath = ""):
-    """
-    Visualizes a Series (scan) and with a SEG series overlay.
-    Requires a path parameter for the reference series.
-    Requires the file path for the annotation series.
-    Used by the viewSeriesAnnotation() function.
-    Not recommended to be used as a standalone function.
-    """
-    slices = [pydicom.dcmread(seriesPath + '/' + s) for s in os.listdir(seriesPath) if s.endswith(".dcm")]
-    slices.sort(key = lambda x: int(x.InstanceNumber), reverse = True)
-
+    # --- 1. Load Image Series using MONAI ---
+    pixel_loader = Compose([LoadImage(reader=ITKReader(reverse_indexing=True)), EnsureChannelFirst()])
+    print(f"Loading image series from '{imgPath}'...")
     try:
-        modality = slices[0].Modality
-    except IndexError:
-        print(f"Your path does not contain a single DICOM series.")
-        raise StopExecution
-
-    image = np.stack([s.pixel_array for s in slices])
-    image = image.astype(np.int16)
-
-    if modality == "CT":
-        # Set outside-of-scan pixels to 0
-        # The intercept is usually -1024, so air is approximately 0
-        image[image == -2000] = 0
-
-        # Convert to Hounsfield units (HU)
-        intercept = slices[0].RescaleIntercept
-        slope = slices[0].RescaleSlope
-
-        if slope != 1:
-            image = slope * image.astype(np.float64)
-            image = image.astype(np.int16)
-
-        image += np.int16(intercept)
-
-    pixel_data = np.array(image, dtype=np.int16)
-    SEG_data = pydicom.dcmread(SEGPath)
-    try:
-        reader = pydicom_seg.MultiClassReader()
-        result = reader.read(SEG_data)
-    except ValueError:
-        reader = pydicom_seg.SegmentReader()
-        result = reader.read(SEG_data)
-
-    if slices[0].SeriesInstanceUID != result.referenced_series_uid:
-        raise Exception("The selected reference series and the annotation series don't match!")
-
-    colorPaleatte = ["blue", "orange", "green", "red", "cyan", "brown", "lime", "purple", "yellow", "pink", "olive"]
-    def seg_animation(suppress_warnings, x, **kwargs):
-        plt.imshow(pixel_data[x], cmap = plt.cm.gray)
-        if isinstance(reader, pydicom_seg.reader.MultiClassReader):
-            if kwargs[list(kwargs)[0]] == True:
-                mask_data = result.data
-                try:
-                    plt.imshow(mask_data[x], cmap = plt.cm.rainbow, alpha = 0.5*(mask_data[x] > 0), interpolation = None)
-                except IndexError:
-                    if suppress_warnings == False:
-                        print(f"Visualization for the segment failed. It does not have the same slice count as the reference series.")
-        else:
-            for i in result.available_segments:
-                if i == 10 and len(result.available_segments) > 10:
-                    print(f"Previewing first 10 of {len(result.available_segments)} labels. Please use a DICOM workstation such as 3D Slicer to view the full dataset.")
-                if kwargs[list(kwargs)[i-1]] == True:
-                    mask_data = result.segment_data(i)
-                    cmap = matplotlib.colors.ListedColormap(colorPaleatte[i])
-                    try:
-                        plt.imshow(mask_data[x], cmap = cmap, alpha = 0.5*(mask_data[x] > 0), interpolation = None)
-                    except IndexError:
-                        if suppress_warnings == False:
-                            print(f"Visualization for segment {list(kwargs.keys())[i-1]} failed. It does not have the same slice count as the reference series.")
-        plt.axis('scaled')
-        plt.show()
-
-    if isinstance(reader, pydicom_seg.reader.MultiClassReader):
-        kwargs = {"Show Segments": True}
-        interact(seg_animation, suppress_warnings = False, x=(0, len(pixel_data)-1), **kwargs)
-    else:
-        kwargs = {f"{i+1} - {v.SegmentDescription}":True for i, v in enumerate(SEG_data.SegmentSequence[:10])}
-        interact(seg_animation, suppress_warnings = False, x=(0, len(pixel_data)-1), **kwargs)
-
-
-def viewSeriesRT(seriesPath = "", RTPath = ""):
-    """
-    Visualizes a Series (scan) with an RTSTRUCT overlay.
-    Requires a path parameter for the reference series.
-    Requires the file path for the annotation series.
-    Currenly not able to visualize seed points or fiducials.
-    Used by the viewSeriesAnnotation() function.
-    Not recommended to be used as a standalone function.
-    """
-    rtstruct = rt_utils.RTStructBuilder.create_from(seriesPath, RTPath)
-    roi_names = rtstruct.get_roi_names()
-
-    slices = rtstruct.series_data
-    try:
-        modality = slices[0].Modality
-    except IndexError:
-        print(f"Your path does not contain a single DICOM series.")
-        raise StopExecution
-
-    image = np.stack([s.pixel_array for s in slices])
-    image = image.astype(np.int16)
-
-    if modality == "CT":
-        # Set outside-of-scan pixels to 0
-        # The intercept is usually -1024, so air is approximately 0
-        image[image == -2000] = 0
-
-        # Convert to Hounsfield units (HU)
-        intercept = slices[0].RescaleIntercept
-        slope = slices[0].RescaleSlope
-
-        if slope != 1:
-            image = slope * image.astype(np.float64)
-            image = image.astype(np.int16)
-
-        image += np.int16(intercept)
-
-    pixel_data = np.array(image, dtype=np.int16)
-    colorPaleatte = ["blue", "orange", "green", "red", "cyan", "brown", "lime", "purple", "yellow", "pink", "olive"]
-    def rt_animation(suppress_warnings, x, **kwargs):
-        plt.imshow(pixel_data[x], cmap = plt.cm.gray, interpolation = None)
-        for i in range(len(kwargs)):
-            if i == 9 and len(roi_names) > 10:
-                print(f"Previewing first 10 of {len(roi_names)} labels. Please use a DICOM workstation such as 3D Slicer to view the full dataset.")
-            if kwargs[f"{i+1} - {roi_names[i]}"] == True:
-                try:
-                    mask_data = rtstruct.get_roi_mask_by_name(roi_names[i])
-                    cmap = matplotlib.colors.ListedColormap(colorPaleatte[i])
-                    try:
-                        plt.imshow(mask_data[:, :, x], cmap = cmap, alpha = 0.5*(mask_data[:, :, x] > 0), interpolation = None)
-                    except IndexError:
-                        if suppress_warnings == False:
-                            print(f"Visualization for segment {roi_names[i]} failed. It does not have the same slide count as the reference series.")
-                except Exception as e:
-                    try:
-                        if e.code == -215:
-                            error_message = f"\nThe segment '{roi_names[i]}' is too small to visualize."
-                        else:
-                            error_message = f"\nThe segment '{roi_names[i]}' is too small to visualize."
-                        if suppress_warnings == False: print(error_message)
-                        pass
-                    except:
-                        if suppress_warnings == False: print(f"\n{e}")
-                        pass
-        plt.axis('scaled')
-        plt.show()
-
-    kwargs = {f"{i+1} - {v}": True for i, v in enumerate(roi_names[:10])}
-    interact(rt_animation, suppress_warnings = False, x = (0, len(pixel_data)-1), **kwargs)
-
-
-def viewSeriesAnnotation(seriesPath="", annotationPath=""):
-    """
-    Visualizes a Series (scan) and a related segmentation overlay (SEG or RTSTRUCT).
-    Opens a Tkinter file browser to choose a folder/file if
-    the required parameters are not specified.
-    Note that non-axial images might not be correctly displayed.
-    """
-
-    # Handle seriesPath selection via Tkinter if not provided
-    if seriesPath == "":
-        try:
-            print(f"Select your image series.")
-            tkinter.Tk().withdraw()
-            seriesPath = filedialog.askdirectory()
-        except Exception as e:
-            print(
-                f"An error occurred: {e}"
-                "\nEither Tkinter cannot be launched for series selection, or you're trying to load an unsupported modality."
-                "\nYou can try specifying the folder path to avoid TKinter errors."
-            )
-            return
-
-    # Handle annotationPath selection via Tkinter if not provided
-    if annotationPath == "":
-        try:
-            print(f"Select your annotation file.")
-            tkinter.Tk().withdraw()
-            annotationPath = filedialog.askopenfilename()
-        except Exception as e:
-            print(
-                f"An error occurred: {e}"
-                "\nEither Tkinter cannot be launched for annotation selection, or you're trying to load an unsupported modality."
-                "\nYou can try specifying the annotation file path to avoid TKinter errors."
-            )
-            return
-
-    # Check if the seriesPath is valid
-    if not os.path.isdir(seriesPath):
-        print(f"{seriesPath} is not a directory.")
-        return
-
-    # Check if the annotationPath is valid
-    if not os.path.isfile(annotationPath):
-        print(f"{annotationPath} is not a valid file path.")
-        return
-
-    # Try to read the annotation file and check the modality
-    try:
-        # Safely read the annotation file
-        annotationModality = pydicom.dcmread(annotationPath).Modality
-
-        # Check the modality and proceed accordingly
-        if annotationModality == "SEG":
-            viewSeriesSEG(seriesPath, annotationPath)
-        elif annotationModality == "RTSTRUCT":
-            viewSeriesRT(seriesPath, annotationPath)
-        else:
-            print(f"Wrong modality for the segmentation series, please check your selection.")
+        image_metatensor = pixel_loader(imgPath)
+        image_np = image_metatensor.numpy()[0]
+        print(f"Successfully loaded image pixel data. Shape: {image_np.shape}")
     except Exception as e:
-        print(f"Error reading DICOM file {annotationPath}: {e}")
+        print(f"ERROR: Could not load image series from '{imgPath}'. Exception: {e}")
+        return
+
+    # --- 2. Load and Process Segmentation (with Auto-Detection) ---
+    label_map_np = np.zeros_like(image_np, dtype=np.uint8)
+    segment_metadata = {}
+
+    if segPath and os.path.exists(segPath):
+        try:
+            dcm_header = pydicom.dcmread(segPath, force=True, stop_before_pixels=True)
+            modality = dcm_header.SOPClassUID
+
+            if modality == SEG_UID:
+                print(f"Detected DICOM SEG file. Loading...")
+                seg_metatensor = pixel_loader(segPath)
+                stacked_mask_np = seg_metatensor.numpy()[0]
+                seg_dcm = pydicom.dcmread(segPath, force=True)
+                for seg_item in seg_dcm.SegmentSequence:
+                    seg_num, seg_label = seg_item.SegmentNumber, seg_item.SegmentLabel
+                    segment_metadata[seg_num] = seg_label
+                frame_mapping = {}
+                for i, frame_item in enumerate(seg_dcm.PerFrameFunctionalGroupsSequence):
+                    seg_id_item = frame_item.SegmentIdentificationSequence[0]
+                    segment_number = seg_id_item.ReferencedSegmentNumber
+                    if segment_number not in frame_mapping: frame_mapping[segment_number] = []
+                    frame_mapping[segment_number].append(i)
+                for segment_number, frame_indices in frame_mapping.items():
+                    segment_mask = stacked_mask_np[frame_indices] > 0
+                    label_map_np[segment_mask] = segment_number
+                print("Successfully created label map from DICOM SEG.")
+
+            elif modality == RTSTRUCT_UID:
+                print(f"Detected DICOM RTSTRUCT file. Loading...")
+                print("Loading and sorting source DICOM series for RTSTRUCT alignment...")
+                dicom_series_paths = [os.path.join(imgPath, f) for f in os.listdir(imgPath) if f.endswith('.dcm')]
+                series_data = [pydicom.dcmread(p, force=True) for p in dicom_series_paths]
+                series_data.sort(key=lambda x: float(x.SliceLocation))
+                rtstruct_dcm = pydicom.dcmread(segPath, force=True)
+                rtstruct = RTStruct(series_data, rtstruct_dcm)
+                roi_names = rtstruct.get_roi_names()
+                print(f"Found {len(roi_names)} ROIs: {roi_names}")
+                for i, roi_name in enumerate(roi_names):
+                    segment_number = i + 1
+                    segment_metadata[segment_number] = roi_name
+                    mask_3d = rtstruct.get_roi_mask_by_name(roi_name)
+                    if mask_3d.shape != label_map_np.shape:
+                        mask_3d = mask_3d.transpose(2, 0, 1)
+                    label_map_np[mask_3d] = segment_number
+                print("Successfully created label map from RTSTRUCT.")
+
+            else:
+                print(f"Warning: Unsupported segmentation modality UID: {modality}")
+
+        except Exception as e:
+            print(f"ERROR: Could not process segmentation file '{segPath}'. Exception: {e}")
+            pass
+    else:
+        print("No segmentation file found. Viewer will show image only.")
+
+    # --- 3. Create Stable Color Map and Widgets ---
+    color_map = {}
+    if segment_metadata:
+        max_seg_num = max(segment_metadata.keys())
+        cmap = plt.get_cmap('gist_rainbow', max_seg_num + 1)
+        for seg_num, seg_label in segment_metadata.items():
+            color_map[seg_num] = cmap(seg_num / max_seg_num)
+
+    data_min, data_max = image_np.min(), image_np.max()
+    default_width = int(data_max - data_min)
+    default_level = int(data_min + default_width / 2)
+
+    controls = {
+        'slice_index': IntSlider(min=0, max=image_np.shape[0] - 1, step=1, value=image_np.shape[0] // 2, description="Slice", continuous_update=False, layout={'width': '400px'}),
+        'window_level': IntSlider(min=data_min, max=data_max, step=1, value=default_level, description="Level", continuous_update=False, layout={'width': '400px'}),
+        'window_width': IntSlider(min=1, max=default_width, step=1, value=default_width, description="Width", continuous_update=False, layout={'width': '400px'}),
+    }
+    roi_checkboxes = []
+    for seg_num, seg_label in segment_metadata.items():
+        controls[f'show_{seg_label}'] = Checkbox(value=True, description=seg_label)
+        roi_checkboxes.append(controls[f'show_{seg_label}'])
+
+    # --- 4. Define the Plotting Function ---
+    def plot_slice_with_overlays(slice_index, window_level, window_width, **kwargs):
+        image_slice = image_np[slice_index, :, :]
+        lower_bound = window_level - (window_width / 2)
+        upper_bound = window_level + (window_width / 2)
+        windowed_slice = np.clip(image_slice, lower_bound, upper_bound)
+        norm_image_slice = (windowed_slice - lower_bound) / (window_width + 1e-6)
+        rgb_image_slice = np.stack([norm_image_slice]*3, axis=-1)
+        overlay_slice = np.zeros_like(rgb_image_slice)
+        for seg_num, seg_label in segment_metadata.items():
+            if kwargs.get(f'show_{seg_label}', False):
+                mask = label_map_np[slice_index, :, :] == seg_num
+                overlay_slice[mask] = color_map[seg_num][:3]
+        active_pixels = overlay_slice.sum(axis=2) > 0
+        alpha = 0.6
+        rgb_image_slice[active_pixels] = (rgb_image_slice[active_pixels] * (1 - alpha) + overlay_slice[active_pixels] * alpha)
+
+        fig, ax = plt.subplots(figsize=(10, 10))
+        ax.imshow(rgb_image_slice)
+        ax.set_title(f"Slice {slice_index + 1} / {image_np.shape[0]}")
+        ax.axis('off')
+        plt.show()
+
+    # --- 5. Set Up the Interactive Viewer Layout ---
+    print("\nInitializing interactive viewer...")
+    ui_panel = VBox([controls['slice_index'], controls['window_level'], controls['window_width'], VBox(roi_checkboxes)])
+    output_panel = interactive_output(plot_slice_with_overlays, controls)
+    display(HBox([ui_panel, output_panel]))
+
+
+# --- Backward Compatibility Wrappers ---
+
+def viewSeriesAnnotation(seriesPath: str, annotationPath: str):
+    """
+    DEPRECATED: This function is deprecated and will be removed in a future version.
+    Please use viewDicom() instead.
+
+    Calls viewDicom(imgPath=seriesPath, segPath=annotationPath).
+    """
+    warnings.warn(
+        "`viewSeriesAnnotation()` is deprecated and will be removed in a future version. "
+        "Use `viewDicom()` instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    return viewDicom(imgPath=seriesPath, segPath=annotationPath)
+
+
+def viewSeries(seriesPath: str):
+    """
+    DEPRECATED: This function is deprecated and will be removed in a future version.
+    Please use viewDicom() instead.
+
+    Calls viewDicom(imgPath=seriesPath, segPath=None).
+    """
+    warnings.warn(
+        "`viewSeries()` is deprecated and will be removed in a future version. "
+        "Use `viewDicom()` instead.",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    return viewDicom(imgPath=seriesPath, segPath=None)
