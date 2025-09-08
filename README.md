@@ -2,7 +2,7 @@
 
 This is a simplistic DICOM viewer for images and related segmentations (RTSTRUCT and SEG).  It was developed as a quick and dirty solution for performing spot checks on data downloaded from [The Cancer Imaging Archive (TCIA)](https://www.cancerimagingarchive.net/) using [tcia_utils](https://pypi.org/project/tcia-utils/).  It was later separated into a stand-alone PyPI package as many users of tcia_utils are not concerned with interactively viewing images and this capability introduced a lot of additional dependencies.  There are many other more advanced viewers out there (e.g. 3D Slicer or itkWidgets) that you should try if your data fails with this tool.
 
-[![PyPI Downloads](https://static.pepy.tech/personalized-badge/simpledicomviewer?period=monthly&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads)](https://pepy.tech/projects/simpledicomviewer)
+[![PyPI Downloads](https://static.pepy.tech/personalized-badge/simpledicomviewer?period=month&units=international_system&left_color=blue&right_color=grey&left_text=Downloads%20/%20Month)](https://pepy.tech/project/simpledicomviewer)
 
 # Installation
 
