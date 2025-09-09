@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "simpleDicomViewer"
-version = "2.0.2"
+version = "2.0.3"
 authors = [
   { name="Justin Kirby", email="justin.kirby@nih.gov" },
 ]
-description = "A package to simplify visualizing DICOM data via Jupyter/Python."
+description = "A package to simplify visualizing DICOM data, including images and segmentations (RTSTRUCT and SEG) via Jupyter/Python."
 readme = "README.md"
 requires-python = ">=3.9"
 classifiers = [
@@ -18,7 +18,6 @@ classifiers = [
 ]
 
 dependencies = [
-  "monai[itk]",
   "pydicom",
   "matplotlib",
   "numpy",

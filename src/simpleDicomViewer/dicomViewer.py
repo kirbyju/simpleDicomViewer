@@ -4,20 +4,17 @@ from ipywidgets import interactive_output, IntSlider, Checkbox, VBox, HBox, Drop
 import numpy as np
 import os
 import pydicom
-from monai.transforms import Compose, LoadImage, EnsureChannelFirst
-from monai.data import ITKReader
 from rt_utils import RTStruct
 from IPython.display import display
 import warnings
+import glob
 
-# --- DICOM UID Constants for Modality Check ---
+# --- DICOM UID Constants ---
 RTSTRUCT_UID = '1.2.840.10008.5.1.4.1.1.481.3'
 SEG_UID = '1.2.840.10008.5.1.4.1.1.66.4'
 
 def viewDicom(imgPath: str, segPath: str = None):
     """
-    Creates and displays an interactive DICOM viewer in a Jupyter Notebook.
-
     The viewer supports 3D image series, interactive slice navigation,
     window/level adjustments, and overlays for DICOM SEG and RTSTRUCT
     annotations with toggling capabilities.
@@ -29,15 +26,37 @@ def viewDicom(imgPath: str, segPath: str = None):
             Path to the DICOM segmentation file (SEG or RTSTRUCT).
             The function will auto-detect the modality. Defaults to None.
     """
-    pixel_loader = Compose([LoadImage(reader=ITKReader(reverse_indexing=True)), EnsureChannelFirst()])
+
+    # --- 1. Load Image Series using the Official pydicom Method ---
     print(f"Loading image series from '{imgPath}'...")
     try:
-        image_metatensor = pixel_loader(imgPath)
-        image_np = image_metatensor.numpy()[0]
+        dicom_files = glob.glob(os.path.join(imgPath, '*'))
+        slices = [pydicom.dcmread(f, force=True) for f in dicom_files]
+        image_slices = [s for s in slices if hasattr(s, 'SliceLocation')]
+        image_slices.sort(key=lambda x: float(x.SliceLocation))
+
+        # Apply Rescale Slope and Intercept
+        # This converts the raw pixel values to Hounsfield Units (HU)
+        pixel_arrays = []
+        for s in image_slices:
+            # Get slope and intercept, defaulting to 1 and 0 if not present
+            slope = float(getattr(s, 'RescaleSlope', 1))
+            intercept = float(getattr(s, 'RescaleIntercept', 0))
+
+            # Apply the conversion and ensure the data type is float
+            hu_pixels = s.pixel_array.astype(np.float64) * slope + intercept
+            pixel_arrays.append(hu_pixels)
+
+        image_3d_ycx = np.stack(pixel_arrays, axis=-1)
+
+        image_np = image_3d_ycx.transpose(2, 0, 1)
+        print(f"Successfully loaded and converted image to HU. Shape: {image_np.shape}")
+
     except Exception as e:
         print(f"ERROR: Could not load image series from '{imgPath}'. Exception: {e}")
         return
 
+    # --- 2. Load and Process Segmentation ---
     label_map_np = np.zeros_like(image_np, dtype=np.uint8)
     segment_metadata = {}
     if segPath and os.path.exists(segPath):
@@ -46,9 +65,8 @@ def viewDicom(imgPath: str, segPath: str = None):
             modality = dcm_header.SOPClassUID
             if modality == SEG_UID:
                 print(f"Detected DICOM SEG file. Loading...")
-                seg_metatensor = pixel_loader(segPath)
-                stacked_mask_np = seg_metatensor.numpy()[0]
                 seg_dcm = pydicom.dcmread(segPath, force=True)
+                stacked_mask_np = seg_dcm.pixel_array
                 for seg_item in seg_dcm.SegmentSequence:
                     seg_num, seg_label = seg_item.SegmentNumber, seg_item.SegmentLabel
                     segment_metadata[seg_num] = seg_label
@@ -65,11 +83,9 @@ def viewDicom(imgPath: str, segPath: str = None):
             elif modality == RTSTRUCT_UID:
                 print(f"Detected DICOM RTSTRUCT file. Loading...")
                 print("Loading and sorting source DICOM series for RTSTRUCT alignment...")
-                dicom_series_paths = [os.path.join(imgPath, f) for f in os.listdir(imgPath) if f.endswith('.dcm')]
-                series_data = [pydicom.dcmread(p, force=True) for p in dicom_series_paths]
-                series_data.sort(key=lambda x: float(x.SliceLocation))
+                # We can reuse the sorted image_slices we already loaded
                 rtstruct_dcm = pydicom.dcmread(segPath, force=True)
-                rtstruct = RTStruct(series_data, rtstruct_dcm)
+                rtstruct = RTStruct(image_slices, rtstruct_dcm)
                 roi_names = rtstruct.get_roi_names()
                 print(f"Found {len(roi_names)} ROIs: {roi_names}")
                 for i, roi_name in enumerate(roi_names):
@@ -88,13 +104,13 @@ def viewDicom(imgPath: str, segPath: str = None):
     else:
         print("No segmentation file found. Viewer will show image only.")
 
+    # --- 3. Create Stable Color Map, Presets, and Widgets ---
     color_map = {}
     if segment_metadata:
         max_seg_num = max(segment_metadata.keys())
         cmap = plt.get_cmap('gist_rainbow', max_seg_num + 1)
         for seg_num, seg_label in segment_metadata.items():
             color_map[seg_num] = cmap(seg_num / max_seg_num)
-
     data_min, data_max = image_np.min(), image_np.max()
     presets = {
         'Default': (int(data_max - data_min), int(data_min + (data_max - data_min) / 2)),
@@ -112,7 +128,6 @@ def viewDicom(imgPath: str, segPath: str = None):
     for seg_num, seg_label in segment_metadata.items():
         controls[f'show_{seg_label}'] = Checkbox(value=True, description=seg_label)
         roi_checkboxes.append(controls[f'show_{seg_label}'])
-
     def update_sliders_from_preset(change):
         if change.new in presets:
             width, level = presets[change.new]
@@ -120,6 +135,7 @@ def viewDicom(imgPath: str, segPath: str = None):
             controls['window_level'].value = level
     controls['preset_selector'].observe(update_sliders_from_preset, names='value')
 
+    # --- 4. Define the Plotting Function ---
     def plot_slice_with_overlays(slice_index, window_level, window_width, **kwargs):
         image_slice = image_np[slice_index, :, :]
         lower_bound = window_level - (window_width / 2)
@@ -141,42 +157,17 @@ def viewDicom(imgPath: str, segPath: str = None):
         ax.axis('off')
         plt.show()
 
+    # --- 5. Set Up the Interactive Viewer Layout ---
     print("\nInitializing interactive viewer...")
     ui_panel = VBox([controls['preset_selector'], controls['slice_index'], controls['window_level'], controls['window_width'], VBox(roi_checkboxes)])
     plot_controls = {k: v for k, v in controls.items() if k != 'preset_selector'}
     output_panel = interactive_output(plot_slice_with_overlays, plot_controls)
     display(HBox([ui_panel, output_panel]))
 
-
-# --- Backward Compatibility Wrappers ---
-
 def viewSeriesAnnotation(seriesPath: str, annotationPath: str):
-    """
-    DEPRECATED: This function is deprecated and will be removed in a future version.
-    Please use viewDicom() instead.
-
-    Calls viewDicom(imgPath=seriesPath, segPath=annotationPath).
-    """
-    warnings.warn(
-        "`viewSeriesAnnotation()` is deprecated and will be removed in a future version. "
-        "Use `viewDicom()` instead.",
-        DeprecationWarning,
-        stacklevel=2
-    )
-    return viewDicom(imgPath=seriesPath, segPath=annotationPath)
-
+    warnings.warn("`viewSeriesAnnotation()` is deprecated. Use `viewDicom()` instead.", DeprecationWarning, stacklevel=2)
+    viewDicom(imgPath=seriesPath, segPath=annotationPath)
 
 def viewSeries(seriesPath: str):
-    """
-    DEPRECATED: This function is deprecated and will be removed in a future version.
-    Please use viewDicom() instead.
-
-    Calls viewDicom(imgPath=seriesPath, segPath=None).
-    """
-    warnings.warn(
-        "`viewSeries()` is deprecated and will be removed in a future version. "
-        "Use `viewDicom()` instead.",
-        DeprecationWarning,
-        stacklevel=2
-    )
-    return viewDicom(imgPath=seriesPath, segPath=None)
+    warnings.warn("`viewSeries()` is deprecated. Use `viewDicom()` instead.", DeprecationWarning, stacklevel=2)
+    viewDicom(imgPath=seriesPath, segPath=None)
