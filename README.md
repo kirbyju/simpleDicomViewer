@@ -6,14 +6,24 @@ This is a simplistic DICOM viewer for images and related segmentations (RTSTRUCT
 
 # Installation
 
-Installation is performed using `pip install simpleDicomViewer` or:
+Installation is performed using `pip install simpleDicomViewer`.
 
-```
-import sys
+### Jupyter Widget Installation
 
-# install simpleDicomViewer
-!{sys.executable} -m pip install --upgrade -q simpleDicomViewer
+The interactive viewer is built using `ipywidgets`. After installing the python package, you may also need to enable the corresponding extension for your Jupyter environment.
+
+**For classic Jupyter Notebook:**
+```bash
+jupyter nbextension enable --py widgetsnbextension
 ```
+
+**For JupyterLab:**
+```bash
+jupyter labextension install @jupyter-widgets/jupyterlab-manager
+```
+After running the appropriate command, **restart your Jupyter server** to ensure the changes take effect. If you are using a hosted Jupyter environment like Google Colab, this step is typically not necessary as the extensions are pre-configured.
+
+For more detailed instructions, please refer to the [ipywidgets installation guide](https://ipywidgets.readthedocs.io/en/latest/user_install.html).
 
 # Usage
 
@@ -26,6 +36,20 @@ viewDicom(imagePath, segmentationPath)
 ```
 
 Functional examples using TCIA data can be found in [TCIA_Segmentations.ipynb](https://github.com/kirbyju/TCIA_Notebooks/blob/main/TCIA_Segmentations.ipynb).
+
+# Troubleshooting
+
+If you encounter an "Error displaying widget: model not found" message or a warning that the `@jupyter-widgets/jupyterlab-manager` extension is outdated, it likely means there is a version mismatch between the `ipywidgets` Python package and the JupyterLab extension. This can often be resolved by running the following commands:
+
+```bash
+# Upgrade the ipywidgets package in your environment
+pip install --upgrade ipywidgets
+
+# Clean and rebuild the JupyterLab assets
+jupyter lab clean
+jupyter lab build
+```
+Remember to run these commands in the correct Python environment where you have JupyterLab and your kernel installed, and restart the JupyterLab server afterwards.
 
 # Acknowledgements
 
